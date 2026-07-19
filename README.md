@@ -8,7 +8,7 @@ a single repository of a chosen format (Docker, Maven, NPM, and more).
 
 ```hcl
 module "artifact_registry" {
-  source = "github.com/cybercapybara/terraform-google-artifact-registry"
+  source = "github.com/moveeeax/terraform-google-artifact-registry"
 
   project_id    = var.project_id
   repository_id = "containers"
