@@ -8,7 +8,7 @@ a single repository of a chosen format (Docker, Maven, NPM, and more).
 
 ```hcl
 module "artifact_registry" {
-  source = "github.com/moveeeax/terraform-google-artifact-registry"
+  source = "github.com/moveeeax/terraform-google-artifact-registry?ref=v1.0.0"
 
   project_id    = var.project_id
   repository_id = "containers"
@@ -23,7 +23,7 @@ A runnable example lives in [`examples/basic`](examples/basic).
 
 ```hcl
 module "artifact_registry" {
-  source = "github.com/moveeeax/terraform-google-artifact-registry"
+  source = "github.com/moveeeax/terraform-google-artifact-registry?ref=v1.0.0"
 
   project_id    = var.project_id
   repository_id = "containers"
