@@ -72,3 +72,93 @@ variable "immutable_tags" {
   type        = bool
   default     = false
 }
+
+variable "cleanup_policies" {
+  description = <<-EOT
+    Cleanup policies, keyed by policy id (under 128 characters). Each policy has
+    an `action` of DELETE or KEEP and exactly one of:
+      * `condition` - match versions by `tag_state` (TAGGED, UNTAGGED, ANY),
+        `tag_prefixes`, `version_name_prefixes`, `package_name_prefixes`,
+        `older_than` or `newer_than` (durations, e.g. "2592000s").
+      * `most_recent_versions` - keep the newest `keep_count` versions,
+        optionally per `package_name_prefixes`. KEEP only.
+    KEEP policies take precedence over DELETE. A DELETE policy must set at
+    least one matcher, because an empty condition matches every version in the
+    repository. Defaults to no policies; deletions only happen once
+    cleanup_policy_dry_run is set to false.
+  EOT
+  type = map(object({
+    action = string
+    condition = optional(object({
+      tag_state             = optional(string)
+      tag_prefixes          = optional(list(string))
+      version_name_prefixes = optional(list(string))
+      package_name_prefixes = optional(list(string))
+      older_than            = optional(string)
+      newer_than            = optional(string)
+    }))
+    most_recent_versions = optional(object({
+      package_name_prefixes = optional(list(string))
+      keep_count            = optional(number)
+    }))
+  }))
+  default = {}
+
+  validation {
+    condition     = alltrue([for id, p in var.cleanup_policies : length(id) > 0 && length(id) < 128])
+    error_message = "cleanup_policies keys are policy ids and must be 1 to 127 characters long."
+  }
+
+  validation {
+    condition     = alltrue([for id, p in var.cleanup_policies : contains(["DELETE", "KEEP"], p.action)])
+    error_message = "Each cleanup policy action must be DELETE or KEEP."
+  }
+
+  validation {
+    condition = alltrue([
+      for id, p in var.cleanup_policies : (p.condition == null) != (p.most_recent_versions == null)
+    ])
+    error_message = "Each cleanup policy must set exactly one of condition or most_recent_versions."
+  }
+
+  validation {
+    condition = alltrue([
+      for id, p in var.cleanup_policies : p.most_recent_versions == null || p.action == "KEEP"
+    ])
+    error_message = "most_recent_versions is only valid on a KEEP cleanup policy."
+  }
+
+  validation {
+    condition = alltrue([
+      for id, p in var.cleanup_policies :
+      p.condition == null || contains(["TAGGED", "UNTAGGED", "ANY"], coalesce(try(p.condition.tag_state, null), "ANY"))
+    ])
+    error_message = "cleanup policy condition.tag_state must be TAGGED, UNTAGGED or ANY."
+  }
+
+  # A DELETE condition with no matcher (or only tag_state = "ANY") matches every
+  # version in the repository. The API accepts it; this module does not.
+  validation {
+    condition = alltrue([
+      for id, p in var.cleanup_policies : p.action != "DELETE" || p.condition == null || anytrue([
+        !contains([null, "ANY"], try(p.condition.tag_state, null)),
+        length(coalesce(try(p.condition.tag_prefixes, null), [])) > 0,
+        length(coalesce(try(p.condition.version_name_prefixes, null), [])) > 0,
+        length(coalesce(try(p.condition.package_name_prefixes, null), [])) > 0,
+        try(p.condition.older_than, null) != null,
+        try(p.condition.newer_than, null) != null,
+      ])
+    ])
+    error_message = "A DELETE cleanup policy must set at least one of condition.tag_state (TAGGED or UNTAGGED), tag_prefixes, version_name_prefixes, package_name_prefixes, older_than or newer_than; an empty condition deletes every version."
+  }
+}
+
+variable "cleanup_policy_dry_run" {
+  description = <<-EOT
+    Evaluate cleanup_policies without deleting anything. Defaults to true, the
+    opposite of the provider default, so a new or mistaken policy can be
+    reviewed before it deletes artifacts. Set to false to arm the policies. Has no effect when cleanup_policies is empty.
+  EOT
+  type        = bool
+  default     = true
+}
