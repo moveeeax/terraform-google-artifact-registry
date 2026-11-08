@@ -2,7 +2,8 @@
 
 Terraform module that manages a [Google Cloud](https://cloud.google.com/)
 Artifact Registry repository (`google_artifact_registry_repository`). It creates
-a single repository of a chosen format (Docker, Maven, NPM, and more).
+a single repository of a chosen format (Docker, Maven, NPM, and more), with
+optional cleanup policies and repository-scoped IAM grants.
 
 ## Usage
 
@@ -80,15 +81,37 @@ DELETE. A `DELETE` policy whose condition sets no matcher (or only
 `tag_state = "ANY"`) would delete every version in the repository, so the
 module rejects it at plan time.
 
+### Repository IAM
+
+```hcl
+module "artifact_registry" {
+  source = "github.com/moveeeax/terraform-google-artifact-registry?ref=v1.2.0"
+
+  project_id    = var.project_id
+  repository_id = "containers"
+  location      = "us-central1"
+
+  readers = ["serviceAccount:gke-nodes@${var.project_id}.iam.gserviceaccount.com"]
+  writers = ["serviceAccount:ci@${var.project_id}.iam.gserviceaccount.com"]
+
+  iam = {
+    "roles/artifactregistry.repoAdmin" = ["group:platform@example.com"]
+  }
+}
+```
+
+`readers` and `writers` grant `roles/artifactregistry.reader` and
+`roles/artifactregistry.writer` on this repository only, which is the
+alternative to granting those roles project-wide. `iam` maps any other role to
+its members. Grants are additive `google_artifact_registry_repository_iam_member`
+resources, so principals granted outside the module are left alone and the
+module never replaces the repository's IAM policy. Members need a type prefix
+(`serviceAccount:`, `group:`, `user:`, ...), which also rejects `allUsers` and
+`allAuthenticatedUsers`; a public repository has to be granted outside this
+module. Members end up in `for_each` keys, so they must be known at plan time.
+
 ## Notes
 
-- **No IAM is managed by this module.** It deliberately creates no
-  `google_artifact_registry_repository_iam_*` resources, so it cannot grant
-  `allUsers` / `allAuthenticatedUsers` and cannot clobber an existing IAM
-  policy. Grant access separately, and prefer the non-authoritative
-  `google_artifact_registry_repository_iam_member` over `..._iam_binding` or
-  `..._iam_policy` — the authoritative variants silently remove every principal
-  they do not list.
 - `format` is case-insensitive and normalised to upper case before it reaches
   the API, so `"docker"` and `"DOCKER"` behave identically.
 
@@ -113,6 +136,9 @@ module rejects it at plan time.
 | `immutable_tags` | Prevent existing tags from being moved or deleted. `DOCKER` repositories only.                                      | `bool`        | `false`                  |    no    |
 | `cleanup_policies` | Cleanup policies keyed by policy id: `action` plus `condition` or `most_recent_versions`. See [Cleanup policies](#cleanup-policies). | `map(object)` | `{}` | no |
 | `cleanup_policy_dry_run` | Evaluate cleanup policies without deleting. Ignored when `cleanup_policies` is empty.                     | `bool`        | `true`                   |    no    |
+| `readers`        | Members granted `roles/artifactregistry.reader` on the repository.                                                  | `list(string)` | `[]`                   |    no    |
+| `writers`        | Members granted `roles/artifactregistry.writer` on the repository.                                                  | `list(string)` | `[]`                   |    no    |
+| `iam`            | Additional repository grants, role to members.                                                                      | `map(list(string))` | `{}`              |    no    |
 
 ## Outputs
 
@@ -121,6 +147,7 @@ module rejects it at plan time.
 | `id`            | Identifier of the repository.     |
 | `name`          | Name of the repository.           |
 | `repository_id` | Repository id within the location.|
+| `iam_members`   | Repository IAM grants created, as `{ role, member }` objects. |
 
 ## Development
 
