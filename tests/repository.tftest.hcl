@@ -153,3 +153,197 @@ run "labels_and_description_are_forwarded" {
     error_message = "labels should be forwarded."
   }
 }
+
+# Existing callers must see no cleanup configuration after upgrading: no
+# policies and cleanup_policy_dry_run left unset.
+run "no_cleanup_policies_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(google_artifact_registry_repository.this.cleanup_policies) == 0
+    error_message = "No cleanup policies should be emitted by default."
+  }
+
+  assert {
+    condition     = google_artifact_registry_repository.this.cleanup_policy_dry_run == null
+    error_message = "cleanup_policy_dry_run must stay null when no cleanup policies are declared."
+  }
+}
+
+run "cleanup_policies_default_to_dry_run" {
+  command = plan
+
+  variables {
+    cleanup_policies = {
+      "delete-untagged" = {
+        action = "DELETE"
+        condition = {
+          tag_state  = "UNTAGGED"
+          older_than = "604800s"
+        }
+      }
+      "keep-recent" = {
+        action = "KEEP"
+        most_recent_versions = {
+          keep_count = 10
+        }
+      }
+      "keep-release" = {
+        action = "KEEP"
+        condition = {
+          tag_state    = "TAGGED"
+          tag_prefixes = ["v"]
+        }
+      }
+    }
+  }
+
+  assert {
+    condition     = google_artifact_registry_repository.this.cleanup_policy_dry_run == true
+    error_message = "cleanup_policy_dry_run should default to true once policies are declared."
+  }
+
+  assert {
+    condition     = length(google_artifact_registry_repository.this.cleanup_policies) == 3
+    error_message = "Every declared cleanup policy should be emitted."
+  }
+
+  assert {
+    condition = one([
+      for p in google_artifact_registry_repository.this.cleanup_policies : p.condition[0].tag_state
+      if p.id == "delete-untagged"
+    ]) == "UNTAGGED"
+    error_message = "condition fields should be forwarded."
+  }
+
+  assert {
+    condition = one([
+      for p in google_artifact_registry_repository.this.cleanup_policies : p.most_recent_versions[0].keep_count
+      if p.id == "keep-recent"
+    ]) == 10
+    error_message = "most_recent_versions.keep_count should be forwarded."
+  }
+}
+
+run "cleanup_policies_can_be_armed" {
+  command = plan
+
+  variables {
+    cleanup_policy_dry_run = false
+    cleanup_policies = {
+      "delete-untagged" = {
+        action    = "DELETE"
+        condition = { tag_state = "UNTAGGED" }
+      }
+    }
+  }
+
+  assert {
+    condition     = google_artifact_registry_repository.this.cleanup_policy_dry_run == false
+    error_message = "cleanup_policy_dry_run = false should be forwarded."
+  }
+}
+
+run "rejects_unknown_cleanup_action" {
+  command = plan
+
+  variables {
+    cleanup_policies = {
+      "p" = {
+        action    = "delete"
+        condition = { tag_state = "UNTAGGED" }
+      }
+    }
+  }
+
+  expect_failures = [var.cleanup_policies]
+}
+
+run "rejects_cleanup_policy_with_both_condition_and_most_recent_versions" {
+  command = plan
+
+  variables {
+    cleanup_policies = {
+      "p" = {
+        action               = "KEEP"
+        condition            = { tag_state = "TAGGED" }
+        most_recent_versions = { keep_count = 5 }
+      }
+    }
+  }
+
+  expect_failures = [var.cleanup_policies]
+}
+
+run "rejects_cleanup_policy_with_neither_condition_nor_most_recent_versions" {
+  command = plan
+
+  variables {
+    cleanup_policies = {
+      "p" = { action = "KEEP" }
+    }
+  }
+
+  expect_failures = [var.cleanup_policies]
+}
+
+run "rejects_most_recent_versions_on_delete" {
+  command = plan
+
+  variables {
+    cleanup_policies = {
+      "p" = {
+        action               = "DELETE"
+        most_recent_versions = { keep_count = 5 }
+      }
+    }
+  }
+
+  expect_failures = [var.cleanup_policies]
+}
+
+run "rejects_unknown_tag_state" {
+  command = plan
+
+  variables {
+    cleanup_policies = {
+      "p" = {
+        action    = "KEEP"
+        condition = { tag_state = "untagged" }
+      }
+    }
+  }
+
+  expect_failures = [var.cleanup_policies]
+}
+
+# An empty DELETE condition matches every version in the repository.
+run "rejects_delete_policy_that_matches_everything" {
+  command = plan
+
+  variables {
+    cleanup_policies = {
+      "p" = {
+        action    = "DELETE"
+        condition = { tag_state = "ANY" }
+      }
+    }
+  }
+
+  expect_failures = [var.cleanup_policies]
+}
+
+run "rejects_overlong_cleanup_policy_id" {
+  command = plan
+
+  variables {
+    cleanup_policies = {
+      (join("", [for i in range(128) : "a"])) = {
+        action    = "DELETE"
+        condition = { tag_state = "UNTAGGED" }
+      }
+    }
+  }
+
+  expect_failures = [var.cleanup_policies]
+}

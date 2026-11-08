@@ -28,6 +28,44 @@ resource "google_artifact_registry_repository" "this" {
     }
   }
 
+  # Cleanup policies delete artifacts permanently, so none exist unless the
+  # caller declares them. While any are declared, cleanup_policy_dry_run
+  # follows var.cleanup_policy_dry_run (true by default: the policies are
+  # evaluated and logged but nothing is deleted). With no policies it stays
+  # null, so repositories that never used cleanup policies see no diff.
+  cleanup_policy_dry_run = length(var.cleanup_policies) > 0 ? var.cleanup_policy_dry_run : null
+
+  dynamic "cleanup_policies" {
+    for_each = var.cleanup_policies
+
+    content {
+      id     = cleanup_policies.key
+      action = cleanup_policies.value.action
+
+      dynamic "condition" {
+        for_each = cleanup_policies.value.condition == null ? [] : [cleanup_policies.value.condition]
+
+        content {
+          tag_state             = condition.value.tag_state
+          tag_prefixes          = condition.value.tag_prefixes
+          version_name_prefixes = condition.value.version_name_prefixes
+          package_name_prefixes = condition.value.package_name_prefixes
+          older_than            = condition.value.older_than
+          newer_than            = condition.value.newer_than
+        }
+      }
+
+      dynamic "most_recent_versions" {
+        for_each = cleanup_policies.value.most_recent_versions == null ? [] : [cleanup_policies.value.most_recent_versions]
+
+        content {
+          package_name_prefixes = most_recent_versions.value.package_name_prefixes
+          keep_count            = most_recent_versions.value.keep_count
+        }
+      }
+    }
+  }
+
   lifecycle {
     # docker_config is rejected by the API for non-Docker repositories. Catch
     # it during plan instead of letting the apply fail half-way through.

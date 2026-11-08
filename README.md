@@ -40,6 +40,46 @@ module "artifact_registry" {
 }
 ```
 
+### Cleanup policies
+
+```hcl
+module "artifact_registry" {
+  source = "github.com/moveeeax/terraform-google-artifact-registry?ref=v1.2.0"
+
+  project_id    = var.project_id
+  repository_id = "containers"
+  location      = "us-central1"
+
+  cleanup_policies = {
+    # Untagged images left behind by CI after a week.
+    "delete-untagged" = {
+      action    = "DELETE"
+      condition = { tag_state = "UNTAGGED", older_than = "604800s" }
+    }
+    # Always keep the newest 10 versions, whatever the rule above says.
+    "keep-recent" = {
+      action               = "KEEP"
+      most_recent_versions = { keep_count = 10 }
+    }
+  }
+
+  # Policies run in dry-run mode until this is set to false.
+  # cleanup_policy_dry_run = false
+}
+```
+
+Cleanup policies delete artifacts permanently, so the module creates none by
+default, and once you declare some it keeps them in dry-run mode
+(`cleanup_policy_dry_run = true`) until you set `cleanup_policy_dry_run = false`.
+The provider's own default is `false`, meaning armed. Recommended rollout:
+declare the policies, check what they would delete, then arm them.
+
+Each policy has an `action` (`DELETE` or `KEEP`) and exactly one of
+`condition` or `most_recent_versions` (`KEEP` only). KEEP policies win over
+DELETE. A `DELETE` policy whose condition sets no matcher (or only
+`tag_state = "ANY"`) would delete every version in the repository, so the
+module rejects it at plan time.
+
 ## Notes
 
 - **No IAM is managed by this module.** It deliberately creates no
@@ -49,11 +89,6 @@ module "artifact_registry" {
   `google_artifact_registry_repository_iam_member` over `..._iam_binding` or
   `..._iam_policy` — the authoritative variants silently remove every principal
   they do not list.
-- **No cleanup policies are managed by this module** either. A mistaken
-  `cleanup_policies` condition permanently deletes live artifacts, and the
-  provider's `cleanup_policy_dry_run` defaults to `false` (deletions armed). If
-  you need them, declare them alongside this module and start with
-  `cleanup_policy_dry_run = true`.
 - `format` is case-insensitive and normalised to upper case before it reaches
   the API, so `"docker"` and `"DOCKER"` behave identically.
 
@@ -62,7 +97,7 @@ module "artifact_registry" {
 | Name      | Version  |
 |-----------|----------|
 | terraform | >= 1.5   |
-| google    | >= 5.0   |
+| google    | >= 5.14  |
 
 ## Inputs
 
@@ -76,6 +111,8 @@ module "artifact_registry" {
 | `labels`         | Labels applied to the repository.                                                                                  | `map(string)` | `{}`                     |    no    |
 | `kms_key_name`   | Fully qualified Cloud KMS key for customer-managed encryption. `null` uses Google-managed keys. Immutable.          | `string`      | `null`                   |    no    |
 | `immutable_tags` | Prevent existing tags from being moved or deleted. `DOCKER` repositories only.                                      | `bool`        | `false`                  |    no    |
+| `cleanup_policies` | Cleanup policies keyed by policy id: `action` plus `condition` or `most_recent_versions`. See [Cleanup policies](#cleanup-policies). | `map(object)` | `{}` | no |
+| `cleanup_policy_dry_run` | Evaluate cleanup policies without deleting. Ignored when `cleanup_policies` is empty.                     | `bool`        | `true`                   |    no    |
 
 ## Outputs
 
