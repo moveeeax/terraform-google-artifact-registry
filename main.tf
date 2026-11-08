@@ -3,6 +3,19 @@ locals {
   # echoes it back that way. Normalising here lets callers pass "docker"
   # without provoking a permanent diff on every subsequent plan.
   format = upper(var.format)
+
+  # readers and writers are shorthands for the two roles almost every caller
+  # needs; iam covers the rest. Keyed by role and member so the same grant
+  # listed twice (e.g. in writers and in iam) collapses into one resource.
+  iam_members = merge(
+    { for m in var.readers : "roles/artifactregistry.reader/${m}" => { role = "roles/artifactregistry.reader", member = m } },
+    { for m in var.writers : "roles/artifactregistry.writer/${m}" => { role = "roles/artifactregistry.writer", member = m } },
+    merge([
+      for role, members in var.iam : {
+        for m in members : "${role}/${m}" => { role = role, member = m }
+      }
+    ]...),
+  )
 }
 
 resource "google_artifact_registry_repository" "this" {
@@ -74,4 +87,17 @@ resource "google_artifact_registry_repository" "this" {
       error_message = "immutable_tags is only supported on DOCKER repositories, but var.format is \"${var.format}\"."
     }
   }
+}
+
+# Additive grants only (iam_member, never iam_binding or iam_policy), so
+# principals granted outside this module are left alone and the module cannot
+# wipe an existing repository policy.
+resource "google_artifact_registry_repository_iam_member" "this" {
+  for_each = local.iam_members
+
+  project    = google_artifact_registry_repository.this.project
+  location   = google_artifact_registry_repository.this.location
+  repository = google_artifact_registry_repository.this.repository_id
+  role       = each.value.role
+  member     = each.value.member
 }

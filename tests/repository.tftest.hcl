@@ -347,3 +347,113 @@ run "rejects_overlong_cleanup_policy_id" {
 
   expect_failures = [var.cleanup_policies]
 }
+
+# The module used to create no IAM at all; upgrading must keep it that way for
+# callers who do not ask for grants.
+run "no_iam_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(google_artifact_registry_repository_iam_member.this) == 0
+    error_message = "No IAM grants should be created by default."
+  }
+}
+
+run "readers_writers_and_iam_create_member_grants" {
+  command = plan
+
+  variables {
+    readers = ["serviceAccount:gke-nodes@example-project.iam.gserviceaccount.com"]
+    writers = ["serviceAccount:ci@example-project.iam.gserviceaccount.com"]
+    iam = {
+      "roles/artifactregistry.repoAdmin" = ["group:platform@example.com"]
+      # Duplicates the writers entry; must collapse into one grant.
+      "roles/artifactregistry.writer" = ["serviceAccount:ci@example-project.iam.gserviceaccount.com"]
+    }
+  }
+
+  assert {
+    condition     = length(google_artifact_registry_repository_iam_member.this) == 3
+    error_message = "Expected one grant per distinct role and member."
+  }
+
+  assert {
+    condition     = google_artifact_registry_repository_iam_member.this["roles/artifactregistry.reader/serviceAccount:gke-nodes@example-project.iam.gserviceaccount.com"].role == "roles/artifactregistry.reader"
+    error_message = "readers should be granted roles/artifactregistry.reader."
+  }
+
+  assert {
+    condition     = google_artifact_registry_repository_iam_member.this["roles/artifactregistry.writer/serviceAccount:ci@example-project.iam.gserviceaccount.com"].member == "serviceAccount:ci@example-project.iam.gserviceaccount.com"
+    error_message = "writers should be granted roles/artifactregistry.writer."
+  }
+
+  assert {
+    condition     = google_artifact_registry_repository_iam_member.this["roles/artifactregistry.repoAdmin/group:platform@example.com"].repository == "example-repo"
+    error_message = "Grants must target this repository."
+  }
+
+  assert {
+    condition     = google_artifact_registry_repository_iam_member.this["roles/artifactregistry.repoAdmin/group:platform@example.com"].location == "us-central1"
+    error_message = "Grants must use the repository location."
+  }
+
+  assert {
+    condition     = length(output.iam_members) == 3
+    error_message = "iam_members should list every grant."
+  }
+}
+
+run "custom_roles_are_accepted" {
+  command = plan
+
+  variables {
+    iam = {
+      "projects/example-project/roles/arPuller" = ["serviceAccount:a@example-project.iam.gserviceaccount.com"]
+    }
+  }
+
+  assert {
+    condition     = length(google_artifact_registry_repository_iam_member.this) == 1
+    error_message = "A project custom role should be accepted."
+  }
+}
+
+run "rejects_reader_without_type_prefix" {
+  command = plan
+
+  variables {
+    readers = ["gke-nodes@example-project.iam.gserviceaccount.com"]
+  }
+
+  expect_failures = [var.readers]
+}
+
+run "rejects_public_writer" {
+  command = plan
+
+  variables {
+    writers = ["allUsers"]
+  }
+
+  expect_failures = [var.writers]
+}
+
+run "rejects_all_authenticated_users_in_iam" {
+  command = plan
+
+  variables {
+    iam = { "roles/artifactregistry.reader" = ["allAuthenticatedUsers"] }
+  }
+
+  expect_failures = [var.iam]
+}
+
+run "rejects_malformed_role" {
+  command = plan
+
+  variables {
+    iam = { "artifactregistry.reader" = ["group:team@example.com"] }
+  }
+
+  expect_failures = [var.iam]
+}

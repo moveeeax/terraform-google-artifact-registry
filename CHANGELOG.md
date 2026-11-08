@@ -15,6 +15,12 @@ All notable changes to this module are documented here. The format follows
 - `cleanup_policy_dry_run` input, `true` by default, so declared policies do
   not delete anything until it is set to `false`. Left unset on the repository
   when no policies are declared, so existing repositories plan no change.
+- Repository-scoped IAM: `readers` and `writers` grant
+  `roles/artifactregistry.reader` and `roles/artifactregistry.writer`, and
+  `iam` maps any other role to members, all as additive
+  `google_artifact_registry_repository_iam_member` resources. Members must carry
+  a type prefix, which rejects `allUsers` and `allAuthenticatedUsers`. New
+  `iam_members` output.
 
 ### Changed
 

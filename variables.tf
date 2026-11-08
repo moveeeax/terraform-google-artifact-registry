@@ -162,3 +162,58 @@ variable "cleanup_policy_dry_run" {
   type        = bool
   default     = true
 }
+
+variable "readers" {
+  description = <<-EOT
+    Members granted roles/artifactregistry.reader on this repository only, e.g.
+    the GKE node service account that pulls images. Members need a type prefix
+    ("serviceAccount:", "group:", "user:", ...) and must be known at plan time.
+  EOT
+  type        = list(string)
+  default     = []
+
+  # A bare email is only rejected by the IAM API at apply time. Requiring a type
+  # prefix also keeps allUsers and allAuthenticatedUsers off the repository.
+  validation {
+    condition     = alltrue([for m in var.readers : can(regex("^[a-zA-Z]+:.+$", m))])
+    error_message = "Each member in readers must carry a type prefix, e.g. \"serviceAccount:name@project.iam.gserviceaccount.com\" or \"group:team@example.com\". allUsers and allAuthenticatedUsers are not accepted."
+  }
+}
+
+variable "writers" {
+  description = <<-EOT
+    Members granted roles/artifactregistry.writer on this repository only, e.g.
+    the CI service account that pushes images. Same member rules as readers.
+  EOT
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for m in var.writers : can(regex("^[a-zA-Z]+:.+$", m))])
+    error_message = "Each member in writers must carry a type prefix, e.g. \"serviceAccount:name@project.iam.gserviceaccount.com\" or \"group:team@example.com\". allUsers and allAuthenticatedUsers are not accepted."
+  }
+}
+
+variable "iam" {
+  description = <<-EOT
+    Additional repository-scoped grants as a map of role to members, e.g.
+    { "roles/artifactregistry.repoAdmin" = ["group:platform@example.com"] }.
+    Roles must be predefined ("roles/...") or custom
+    ("projects/<p>/roles/..." or "organizations/<o>/roles/..."). Same member
+    rules as readers.
+  EOT
+  type        = map(list(string))
+  default     = {}
+
+  validation {
+    condition = alltrue([
+      for role, members in var.iam : can(regex("^(roles/|projects/[^/]+/roles/|organizations/[^/]+/roles/)[^/]+$", role))
+    ])
+    error_message = "Each key in iam must be a role such as \"roles/artifactregistry.repoAdmin\", \"projects/p/roles/custom\" or \"organizations/123/roles/custom\"."
+  }
+
+  validation {
+    condition     = alltrue(flatten([for role, members in var.iam : [for m in members : can(regex("^[a-zA-Z]+:.+$", m))]]))
+    error_message = "Each member in iam must carry a type prefix, e.g. \"serviceAccount:name@project.iam.gserviceaccount.com\" or \"group:team@example.com\". allUsers and allAuthenticatedUsers are not accepted."
+  }
+}
